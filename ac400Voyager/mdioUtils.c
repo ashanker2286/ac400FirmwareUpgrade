@@ -240,10 +240,13 @@ static int lpc_io_rdmdfywr(uint16_t port, uint8_t clr, uint8_t set)
 uint16_t mdio_read(int connection, uint16_t addr) {
     uint16_t value;
     mdio_access(connection, MDIO_ACCESS_TYPE_READ, addr, &value);
+   
+    printf("MDIO READ Addr:0x%X ---------> Val:0x%X\n", addr, value);
     return value;
 }
 
 int mdio_write(int connection, uint16_t addr, uint16_t val) {
+    printf("MDIO WRITE Addr:0x%X Val:0x%X\n", addr, val);
     int rv; 
     uint16_t value = val;
     rv = mdio_access(connection, MDIO_ACCESS_TYPE_WRITE, addr, &value);
