@@ -19,6 +19,37 @@ int isFileExist(char * fileName) {
 	return 0;
 }
 
+int getFWVersion(int moduleId) {
+        uint16_t val = 0;
+        uint8_t firmA_build_num, firmB_build_num;
+        uint16_t firmA_X_ver, firmA_Y_ver;
+        uint16_t firmB_X_ver, firmB_Y_ver;
+
+
+        val = mdio_read(moduleId, 0xB051);
+        if ((val & 0x1000) >> 12) {
+                printf("Currently Running Image is A (val = 0x%x)\n", val);
+        } else {
+                printf("Currently Running Image is B (val = 0x%x)\n", val);
+        }
+
+        val = mdio_read(moduleId, 0x9050);
+        firmA_build_num = val & 0xFF;
+        firmB_build_num = (val >> 8) & 0xFF;
+        printf("Currently Running Firmware A Build Number: 0x%x\n", firmA_build_num);
+        printf("Currently Running Firmware B Build Number: 0x%x\n", firmB_build_num);
+
+        firmA_X_ver = mdio_read(moduleId, 0x806C);
+        firmA_Y_ver = mdio_read(moduleId, 0x806D);
+        firmB_X_ver = mdio_read(moduleId, 0x807B);
+        firmB_Y_ver = mdio_read(moduleId, 0x807C);
+
+        printf("Firmware A Version %d.%d\n", firmA_X_ver, firmA_Y_ver);
+        printf("Firmware B Version %d.%d\n", firmB_X_ver, firmB_Y_ver);
+        return 0;
+}
+
+
    /* Make the table for a fast CRC. */
 void make_crc_table(void)
 {
@@ -92,12 +123,6 @@ int main(int argc, char **argv) {
 		crcTable[i] = crcAccum;
 	}
 
-	make_crc_table();
-	printf("CRC Table:");
-	for (i = 0; i < 256; i++) {
-		//printf("0x%x ------- 0x%x\n", crcTable[i], crc_table[i]);
-	}
-	printf("\n");
 
 	//Check for the current state
 	val = mdio_read(moduleId, 0xB016);
@@ -108,9 +133,10 @@ int main(int argc, char **argv) {
 		printf("Module is in Low Power State\n");
 	}
 
+	getFWVersion(moduleId);
+
 	val = mdio_read(moduleId, 0xB04D);
 	val = (val & 0xF000) >> 12;
-	printf("Value of  0x%X\n", val);
 
 	val = mdio_read(moduleId, 0xB051);
 	if (val & 0x0080) {
@@ -129,33 +155,22 @@ int main(int argc, char **argv) {
 	// TODO:
 	// Set the download block size - 256 bytes for AC100/AC100M, or 0x0080
 	// mdioRdy(10);
-	printf("Set the download block size - 256 bytes for AC100/AC100M, or 0x0080\n");
 	mdio_write(moduleId, 0xBC00, 0x0080);
 
-	// Reset the upgrade control to NOP to reset the Upgrade state machine
-#if 0
-	printf("Reset the upgrade control to NOP to reset the Upgrade state machine\n");
-	val = mdio_read(moduleId, 0xB04D);
-	val = val & 0x0FFF;
-	mdio_write(moduleId, 0xB04D, val);
-	sleep(5);
-#endif
 	// TODO:
 	// Request a firmware download via read/modify/write of address 0xB04D
-	printf("Request a firmware download via read/modify/write of address 0xB04D\n");
 	val = mdio_read(moduleId, 0xB04D) | 0x1000;
-	printf("Val: 0x%X\n", val);
 	// mdioRdy(10);
 	mdio_write(moduleId, 0xB04D, val);
-	sleep(5);
+	val = mdio_read(moduleId, 0xB04D);
 
-#if 0
 	val = mdio_read(moduleId, 0xB051);
-	if (((val & 0xC000) >> 14) != 0x10) {
-		printf("Failure Start Download\n");
-		return -1;
+	if (((val & 0xC000) >> 14) == 0x2) {
+		printf("Successful download start request\n");
+	} else {
+		printf("Failed download Start Request\n");
 	}
-#endif
+
 	// Start reading kit file from the beginning.
 	fseek(fptr, 0, SEEK_SET);
 
@@ -166,7 +181,7 @@ int main(int argc, char **argv) {
 	// Read 256 bytes at a time and write to MDIO 16 bits at a time &
 	// calculate the CRC for 256 byte blocks
 	for (i = 0; i < (fileLen/256); i++) {
-		//printf("Index:%d\n", i);
+		printf("Index:%d\n", i);
 		runningCrc = crcInit;
 		// Write the 256 bytes starting from MDIO address 0xBC01
 		addr = 0xBC01;
@@ -174,7 +189,6 @@ int main(int argc, char **argv) {
 		for (j = 0; j < 128; j++) {
 			byte1 = fgetc(fptr);
 			byte2 = fgetc(fptr);
-			printf("Byte1: 0x%x Byte2 0x%x\n", byte1, byte2);
 
 			data = (byte1 << 8) | byte2;
 			// TODO:
@@ -202,33 +216,27 @@ int main(int argc, char **argv) {
 		mdio_write(moduleId, 0xBC81, runningCrcHigh);
 		// mdioRdy(10);
 		mdio_write(moduleId, 0xBC82, runningCrcLow);
-
-		// set the self clearing Upgrade Data Block Ready bit (15) in register 0xB04C
-		// TODO:
 		// mdioRdy(10);
 		mdio_write(moduleId, 0xB04C, 0x8080);
 
-		for (k = 0; k < 10; k++) {
+		// set the self clearing Upgrade Data Block Ready bit (15) in register 0xB04C
+		// TODO:
+		while(1) {
 			val = mdio_read(moduleId, 0xB04C);
-			if((val & 0x8000) == 1) {
-				printf("Self clearing UDB_cleared hasn't cleared yet %d.\n", k);
-				sleep(1);
-			} else {
+			if ((val & 0x8000) == 0) {
 				break;
 			}
-
-		}
-	
-		if (k == 10) {
-			printf("ERROR: Upgrade Data Block Ready bit (15) never cleared.\n");
-			printf("Sleeping for 20 sec\n");
-			sleep(20);
 		}
 
-		// Confirm the successful block download (Bits 15:14 of 0xB051 = 0x2)
-#if 0
+		while (1) {
+			val = mdio_read(moduleId, 0xB050);
+			if ((val & 0x8000) == 0x8000) {
+				break;
+			}
+		}
+
 		val = mdio_read(moduleId, 0xB051);
-		if ((val >> 14) == 0x2) {
+		if ((val >> 14) != 0x2) {
 			fprintf(stderr, "Block Download failed\n");
 			val = val & 0x0003;
 			if (val == 0x1) {
@@ -245,28 +253,25 @@ int main(int argc, char **argv) {
 			fclose(fptr);
 			return -1;
 		}
-#endif
 	}
 
 	// Complete the downlad process by writing 0xB04D bits 15:12 to 0x2
 	// TODO:
 	// mdioRdy(10);
-	mdio_write(moduleId, 0xB04D, 0x2400);
+	val = mdio_read(moduleId, 0xB04D);
+	val = (val & 0x0FFF) | 0x2000;
+	mdio_write(moduleId, 0xB04D, val);
 	// Confirm the successful image download (Bits 15:14 of 0xB051 = 0x1)
 	val = mdio_read(moduleId, 0xB051) >> 14;
-	if (val == 0x1) {
+	if (val != 0x1) {
 	 	fprintf(stderr, "Image download failed\n");
+	} else {
+		printf("Image download complete\n");
 	}
 
 	// Done with Kit file
 	fclose(fptr);
 
-	// Put the module upgrade control into no operation mode
-	// TODO:
-	val = mdio_read(moduleId, 0xB04D) & 0x0FFF;
-	// mdioRdy(10);
-	mdio_write(moduleId, 0xB04D, val);
-	printf("Image download complete\n");
-
+	getFWVersion(moduleId);
 	return 0;
 }
