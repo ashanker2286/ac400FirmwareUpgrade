@@ -82,6 +82,7 @@ int main(int argc, char **argv) {
 	uint16_t data = 0;
 	int moduleId = 0;
 	uint16_t val;
+	uint8_t cnt = 0;
 
 	if (argc != 3) {
 		fprintf(stderr, "Invalid Argument\n");
@@ -128,7 +129,7 @@ int main(int argc, char **argv) {
 	val = mdio_read(moduleId, 0xB016);
 	if (val != 0x0002) {
 		printf("Module is not in low power state, hence existing\n");
-		return -1;
+		//return -1;
 	} else {
 		printf("Module is in Low Power State\n");
 	}
@@ -164,11 +165,20 @@ int main(int argc, char **argv) {
 	mdio_write(moduleId, 0xB04D, val);
 	val = mdio_read(moduleId, 0xB04D);
 
-	val = mdio_read(moduleId, 0xB051);
-	if (((val & 0xC000) >> 14) == 0x2) {
-		printf("Successful download start request\n");
-	} else {
+	cnt = 0;
+	while (cnt < 30) {
+		val = mdio_read(moduleId, 0xB051);
+		if (((val & 0xC000) >> 14) == 0x2) {
+			printf("Successful download start request\n");
+			break;
+		}
+		cnt++;
+		sleep(1);
+	}
+
+	if (cnt == 30) {
 		printf("Failed download Start Request\n");
+		return -1;
 	}
 
 	// Start reading kit file from the beginning.
@@ -181,7 +191,7 @@ int main(int argc, char **argv) {
 	// Read 256 bytes at a time and write to MDIO 16 bits at a time &
 	// calculate the CRC for 256 byte blocks
 	for (i = 0; i < (fileLen/256); i++) {
-		printf("Index:%d\n", i);
+		//printf("Index:%d\n", i);
 		runningCrc = crcInit;
 		// Write the 256 bytes starting from MDIO address 0xBC01
 		addr = 0xBC01;
@@ -253,6 +263,10 @@ int main(int argc, char **argv) {
 			fclose(fptr);
 			return -1;
 		}
+		if (i % 100 == 0) {
+			printf("Image A status 0x%X\n", ((val & 0x0C00) >> 10));
+			printf("Image B status 0x%X\n", ((val & 0x0300) >> 8));
+		}
 	}
 
 	// Complete the downlad process by writing 0xB04D bits 15:12 to 0x2
@@ -262,11 +276,18 @@ int main(int argc, char **argv) {
 	val = (val & 0x0FFF) | 0x2000;
 	mdio_write(moduleId, 0xB04D, val);
 	// Confirm the successful image download (Bits 15:14 of 0xB051 = 0x1)
-	val = mdio_read(moduleId, 0xB051) >> 14;
-	if (val != 0x1) {
-	 	fprintf(stderr, "Image download failed\n");
-	} else {
-		printf("Image download complete\n");
+	cnt = 0;
+	while (cnt < 30) {
+		val = mdio_read(moduleId, 0xB051) >> 14;
+		if (val == 0x1) {
+			printf("Image download complete\n");
+			break;
+		}
+		sleep(1);
+		cnt++;
+	}
+	if (cnt == 30) {
+		fprintf(stderr, "Image download failed\n");
 	}
 
 	// Done with Kit file
